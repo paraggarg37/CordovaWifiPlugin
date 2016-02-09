@@ -1,3 +1,4 @@
+#ADDED support for WPA2 wifi in android 
 # WifiWizard
 
 Version 0.2.10
