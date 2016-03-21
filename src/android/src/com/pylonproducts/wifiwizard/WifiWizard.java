@@ -844,7 +844,7 @@ private static final String LOG_TAG = "CordovaPermissionHelper";
                 listener.setReuseAddress(true);
                 listener.bind(new InetSocketAddress(port));
                 Log.d(TAG, String.format("listening on port = %d", port));
-                while (true) {
+                while (true || !ShouldStopSocketServer) {
 
 
 
@@ -854,11 +854,11 @@ private static final String LOG_TAG = "CordovaPermissionHelper";
 
                     if(ShouldStopSocketServer){
                         Log.d(TAG,"stop called");
-                        socket.close();
-
-                        stopSelf();
+                        //respondToClientSuccess("disconnect");
+                        break;
                     }
 
+                    /*
                     if(socketCallbackContext!=null) {
                         try {
 
@@ -877,27 +877,14 @@ private static final String LOG_TAG = "CordovaPermissionHelper";
                         Log.d(TAG,"callback is null");
                         break;
                     }
+                    */
+
                     BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                     PrintStream out = new PrintStream(socket.getOutputStream());
                     for (String inputLine; (inputLine = in.readLine()) != null;) {
                         Log.d(TAG, "received");
                         Log.d(TAG, inputLine);
-                        if(socketCallbackContext!=null) {
-                            try {
-                                respondToClientSuccess("{\"name\":\"" + socket.getRemoteSocketAddress().toString() + "\",\"message\":\"" + inputLine + "\"}");
-                            }
-                            catch (Exception e){
-                                Log.d(TAG,"closing socket");
-                                e.printStackTrace();
-                                respondToClientSuccess("disconnect");
-                                socket.close();
-                            }
-                         }
-                        else{
-                            Log.d(TAG,"closing socket");
-                            socket.close();
-                            Log.d(TAG,"callback is null");
-                        }
+
 
                         /*
                         OutputStream os = socket.getOutputStream();
@@ -909,8 +896,32 @@ private static final String LOG_TAG = "CordovaPermissionHelper";
 
                         //socketCallbackContext
                         if(inputLine.equals(SOCKET_HANDSHAKE_MESSAGE)) {
+
                             StringBuilder outputStringBuilder = new StringBuilder(SOCKET_HANDSHAKE_RESPONSE);
                             out.println(outputStringBuilder);
+
+                            if(socketCallbackContext!=null) {
+                                try {
+                                    respondToClientSuccess("{\"name\":\"" + socket.getRemoteSocketAddress().toString() + "\",\"message\":\"" + inputLine + "\"}");
+                                    Log.d(TAG,"stopping service");
+                                    respondToClientSuccess("disconnect");
+                                    ShouldStopSocketServer=true;
+                                    break;
+                                }
+                                catch (Exception e){
+                                    Log.d(TAG,"closing socket");
+                                    e.printStackTrace();
+                                    respondToClientError("disconnect");
+                                    ShouldStopSocketServer = true;
+                                }
+                            }
+                            else{
+                                Log.d(TAG,"closing socket");
+                                ShouldStopSocketServer = true;
+                                Log.d(TAG,"callback is null");
+                            }
+
+
                         }else{
                             Log.d(TAG,inputLine);
                             Log.d(TAG,"unknown message");
