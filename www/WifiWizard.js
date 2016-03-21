@@ -281,6 +281,9 @@ cordova.define("com.pylonproducts.wifiwizard.WifiWizard", function(require, expo
 
         createSocketServer:function(win,fail){
              cordova.exec(win, fail, 'WifiWizard', 'createServer', []);
+        },
+        stopSocketServer:function(){
+            cordova.exec(null, null, 'WifiWizard', 'stopServer', []);
         }
 
     };
