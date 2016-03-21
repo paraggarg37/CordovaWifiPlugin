@@ -76,6 +76,7 @@ private static final String LOG_TAG = "CordovaPermissionHelper";
     private static final String GET_CONNECTED_SSID = "getConnectedSSID";
     private static final String IS_WIFI_ENABLED = "isWifiEnabled";
     private static final String CREATE_SERVER = "createServer";
+    private static final String STOP_SERVER = "stopServer";
     private static final String SET_WIFI_ENABLED = "setWifiEnabled";
     private static final String TAG = "WifiWizard";
     private static final String SOCKET_HANDSHAKE_MESSAGE = "hey, are you asfalio app?";
@@ -85,6 +86,7 @@ private static final String LOG_TAG = "CordovaPermissionHelper";
     private WifiManager wifiManager;
     private CallbackContext callbackContext;
     public static CallbackContext socketCallbackContext;
+    public static boolean ShouldStopSocketServer = true;
 
     @Override
     public void initialize(CordovaInterface cordova, CordovaWebView webView) {
@@ -112,7 +114,12 @@ private static final String LOG_TAG = "CordovaPermissionHelper";
             });
 
            return true;
+        }else if(action.equals(STOP_SERVER)){
+            ShouldStopSocketServer = true;
+            return true;
         }
+
+
 
         if(!displayLocationSettingsRequest()){
             callbackContext.error("Android 6 and above Gps turned off");
@@ -180,7 +187,7 @@ private static final String LOG_TAG = "CordovaPermissionHelper";
     }
 
     public void createServer(){
-
+        ShouldStopSocketServer = false;
         cordova.getActivity().startService(new Intent(cordova.getActivity(), MyService.class));
     }
 
@@ -838,13 +845,24 @@ private static final String LOG_TAG = "CordovaPermissionHelper";
                 listener.bind(new InetSocketAddress(port));
                 Log.d(TAG, String.format("listening on port = %d", port));
                 while (true) {
+
+
+
                     Log.d(TAG, "waiting for client");
                     Socket socket = listener.accept();
                     Log.d(TAG, String.format("client connected from: %s", socket.getRemoteSocketAddress().toString()));
+
+                    if(ShouldStopSocketServer){
+                        Log.d(TAG,"stop called");
+                        socket.close();
+
+                        stopSelf();
+                    }
+
                     if(socketCallbackContext!=null) {
                         try {
 
-                            respondToClientSuccess("{'name':'" + socket.getRemoteSocketAddress().toString() + "'}");
+                            respondToClientSuccess("{\"name\":\"" + socket.getRemoteSocketAddress().toString() + "\"}");
                         }catch (Exception e){
                             e.printStackTrace();
                             socket.close();
@@ -866,11 +884,12 @@ private static final String LOG_TAG = "CordovaPermissionHelper";
                         Log.d(TAG, inputLine);
                         if(socketCallbackContext!=null) {
                             try {
-                                respondToClientSuccess("{'name':'" + socket.getRemoteSocketAddress().toString() + "','message':'" + inputLine + "'}");
+                                respondToClientSuccess("{\"name\":\"" + socket.getRemoteSocketAddress().toString() + "\",\"message\":\"" + inputLine + "\"}");
                             }
                             catch (Exception e){
                                 Log.d(TAG,"closing socket");
                                 e.printStackTrace();
+                                respondToClientSuccess("disconnect");
                                 socket.close();
                             }
                          }
