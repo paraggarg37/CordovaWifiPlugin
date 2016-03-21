@@ -1,10 +1,10 @@
 /*
- * Copyright 2015 Matt Parsons
+ * Copyright
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,8 +15,24 @@
 package com.pylonproducts.wifiwizard;
 
 import org.apache.cordova.*;
+
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.PrintStream;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.security.spec.ECField;
 import java.util.List;
 
+import android.app.IntentService;
+import android.os.Build;
+import android.Manifest;
+import android.content.pm.PackageManager;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -31,9 +47,24 @@ import android.net.wifi.SupplicantState;
 import android.content.Context;
 import android.util.Log;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.Arrays;
+import android.location.LocationManager;
+import org.apache.cordova.LOG;
+import android.content.Intent;
+import android.net.Uri;
+
+import android.provider.Settings;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.Arrays;
+
+import org.apache.cordova.CordovaInterface;
+import org.apache.cordova.CordovaPlugin;
 
 public class WifiWizard extends CordovaPlugin {
-
+private static final String LOG_TAG = "CordovaPermissionHelper";
     private static final String ADD_NETWORK = "addNetwork";
     private static final String REMOVE_NETWORK = "removeNetwork";
     private static final String CONNECT_NETWORK = "connectNetwork";
@@ -44,16 +75,22 @@ public class WifiWizard extends CordovaPlugin {
     private static final String GET_SCAN_RESULTS = "getScanResults";
     private static final String GET_CONNECTED_SSID = "getConnectedSSID";
     private static final String IS_WIFI_ENABLED = "isWifiEnabled";
+    private static final String CREATE_SERVER = "createServer";
     private static final String SET_WIFI_ENABLED = "setWifiEnabled";
     private static final String TAG = "WifiWizard";
+    private static final String SOCKET_HANDSHAKE_MESSAGE = "hey, are you asfalio app?";
+    private static final String SOCKET_HANDSHAKE_RESPONSE = "yes";
+    private static  final int port = 7371;
 
     private WifiManager wifiManager;
     private CallbackContext callbackContext;
+    public static CallbackContext socketCallbackContext;
 
     @Override
     public void initialize(CordovaInterface cordova, CordovaWebView webView) {
         super.initialize(cordova, webView);
         this.wifiManager = (WifiManager) cordova.getActivity().getSystemService(Context.WIFI_SERVICE);
+
     }
 
     @Override
@@ -61,6 +98,29 @@ public class WifiWizard extends CordovaPlugin {
                             throws JSONException {
 
         this.callbackContext = callbackContext;
+
+        if(action.equals(CREATE_SERVER)){
+            Log.d(TAG,"createserver called");
+            socketCallbackContext=callbackContext;
+
+            this.cordova.getActivity().runOnUiThread(new Runnable() {
+
+                @Override
+                public void run() {
+                    createServer();
+                }
+            });
+
+           return true;
+        }
+
+        if(!displayLocationSettingsRequest()){
+            callbackContext.error("Android 6 and above Gps turned off");
+        }
+
+        if(!checkCurrentPermissions()){
+            callbackContext.error("permission not found") ;
+        }
 
         if(action.equals(IS_WIFI_ENABLED)) {
             return this.isWifiEnabled(callbackContext);
@@ -106,6 +166,125 @@ public class WifiWizard extends CordovaPlugin {
         return false;
     }
 
+    public static void  respondToClientSuccess(String message){
+        PluginResult result = new PluginResult(PluginResult.Status.OK, message);
+        result.setKeepCallback(true);
+        socketCallbackContext.sendPluginResult(result);
+    }
+    public static void  respondToClientError(String message){
+        try {
+            PluginResult result = new PluginResult(PluginResult.Status.ERROR, message);
+            result.setKeepCallback(true);
+            socketCallbackContext.sendPluginResult(result);
+        }catch (Exception e){e.printStackTrace();}
+    }
+
+    public void createServer(){
+
+        cordova.getActivity().startService(new Intent(cordova.getActivity(), MyService.class));
+    }
+
+    public boolean checkCurrentPermissions(){
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !thasPermission(this,Manifest.permission.ACCESS_COARSE_LOCATION)) {
+            trequestPermissions(this,1,new String[]{Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION});
+            return false;
+         }
+         else return true;
+    }
+    public static void trequestPermissions(CordovaPlugin plugin, int requestCode, String[] permissions) {
+            try {
+                Method requestPermission = CordovaInterface.class.getDeclaredMethod(
+                        "requestPermissions", CordovaPlugin.class, int.class, String[].class);
+
+                // If there is no exception, then this is cordova-android 5.0.0+
+                requestPermission.invoke(plugin.cordova, plugin, requestCode, permissions);
+            } catch (NoSuchMethodException noSuchMethodException) {
+                // cordova-android version is less than 5.0.0, so permission is implicitly granted
+                LOG.d(LOG_TAG, "No need to request permissions " + Arrays.toString(permissions));
+
+                // Notify the plugin that all were granted by using more reflection
+                deliverPermissionResult(plugin, requestCode, permissions);
+            } catch (IllegalAccessException illegalAccessException) {
+                // Should never be caught; this is a public method
+                LOG.e(LOG_TAG, "IllegalAccessException when requesting permissions " + Arrays.toString(permissions), illegalAccessException);
+            } catch(InvocationTargetException invocationTargetException) {
+                // This method does not throw any exceptions, so this should never be caught
+                LOG.e(LOG_TAG, "invocationTargetException when requesting permissions " + Arrays.toString(permissions), invocationTargetException);
+            }
+        }
+
+
+         public static boolean thasPermission(CordovaPlugin plugin, String permission) {
+                try {
+                    Method hasPermission = CordovaInterface.class.getDeclaredMethod("hasPermission", String.class);
+
+                    // If there is no exception, then this is cordova-android 5.0.0+
+                    return (Boolean) hasPermission.invoke(plugin.cordova, permission);
+                } catch (NoSuchMethodException noSuchMethodException) {
+                    // cordova-android version is less than 5.0.0, so permission is implicitly granted
+                    LOG.d(LOG_TAG, "No need to check for permission " + permission);
+                    return true;
+                } catch (IllegalAccessException illegalAccessException) {
+                    // Should never be caught; this is a public method
+                    LOG.e(LOG_TAG, "IllegalAccessException when checking permission " + permission, illegalAccessException);
+                } catch(InvocationTargetException invocationTargetException) {
+                    // This method does not throw any exceptions, so this should never be caught
+                    LOG.e(LOG_TAG, "invocationTargetException when checking permission " + permission, invocationTargetException);
+                }
+                return false;
+            }
+
+            private static void deliverPermissionResult(CordovaPlugin plugin, int requestCode, String[] permissions) {
+                    // Generate the request results
+                    int[] requestResults = new int[permissions.length];
+                    Arrays.fill(requestResults, PackageManager.PERMISSION_GRANTED);
+
+                    try {
+                        Method onRequestPermissionResult = CordovaPlugin.class.getDeclaredMethod(
+                                "onRequestPermissionResult", int.class, String[].class, int[].class);
+
+                        onRequestPermissionResult.invoke(plugin, requestCode, permissions, requestResults);
+                    } catch (NoSuchMethodException noSuchMethodException) {
+                        // Should never be caught since the plugin must be written for cordova-android 5.0.0+ if it
+                        // made it to this point
+                        LOG.e(LOG_TAG, "NoSuchMethodException when delivering permissions results", noSuchMethodException);
+                    } catch (IllegalAccessException illegalAccessException) {
+                        // Should never be caught; this is a public method
+                        LOG.e(LOG_TAG, "IllegalAccessException when delivering permissions results", illegalAccessException);
+                    } catch(InvocationTargetException invocationTargetException) {
+                        // This method may throw a JSONException. We are just duplicating cordova-android's
+                        // exception handling behavior here; all it does is log the exception in CordovaActivity,
+                        // print the stacktrace, and ignore it
+                        LOG.e(LOG_TAG, "InvocationTargetException when delivering permissions results", invocationTargetException);
+                    }
+                }
+
+
+                private boolean displayLocationSettingsRequest() {
+                  Context context=this.cordova.getActivity().getApplicationContext();
+
+                   LocationManager lm = (LocationManager)context.getSystemService(Context.LOCATION_SERVICE);
+                   boolean gps_enabled = false;
+                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M){
+
+                   try {
+                       gps_enabled = lm.isProviderEnabled(LocationManager.GPS_PROVIDER);
+
+                   } catch(Exception ex) {
+
+                   }
+                   }else{
+                    return true;
+                   }
+
+                   return gps_enabled;
+
+                }
+
+
+
+
+
     /**
      * This methods adds a network to the list of available WiFi networks.
      * If the network already exists, then it updates it.
@@ -129,7 +308,7 @@ public class WifiWizard extends CordovaPlugin {
 
         Log.d(TAG, "WifiWizard: addNetwork entered.");
 
-       
+
             // data's order for ANY object is 0: ssid, 1: authentication algorithm,
             // 2+: authentication information.
             String authType = data.getString(1);
@@ -175,7 +354,7 @@ public class WifiWizard extends CordovaPlugin {
             }
             else if (authType.equals("WEP")) {
                 // TODO: connect/configure for WEP
-               
+
                     wifi.allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE);
                     wifi.allowedProtocols.set(WifiConfiguration.Protocol.RSN);
                     wifi.allowedProtocols.set(WifiConfiguration.Protocol.WPA);
@@ -237,7 +416,7 @@ public class WifiWizard extends CordovaPlugin {
 
                 return true;
 
-            }   
+            }
 
             else if (authType.equals("NONE")) {
                 String newSSID = data.getString(0);
@@ -342,7 +521,7 @@ public class WifiWizard extends CordovaPlugin {
         if (networkIdToConnect >= 0) {
             // We disable the network before connecting, because if this was the last connection before
             // a disconnect(), this will not reconnect.
-            
+
             wifiManager.setWifiEnabled(true);
             wifiManager.disableNetwork(networkIdToConnect);
             wifiManager.enableNetwork(networkIdToConnect, true);
@@ -420,7 +599,7 @@ public class WifiWizard extends CordovaPlugin {
      *    of the currently configured networks.
      *
      *    @param    callbackContext        A Cordova callback context
-     *    @param    data                JSON Array, with [0] being SSID to connect
+                JSON Array, with [0] being SSID to connect
      *    @return    true if network disconnected, false if failed
      */
     private boolean listNetworks(CallbackContext callbackContext) {
@@ -607,9 +786,9 @@ public class WifiWizard extends CordovaPlugin {
             Log.d(TAG, "WifiWizard: disconnectNetwork invalid data");
             return false;
         }
-        
+
         String status = "";
-        
+
         try {
             status = data.getString(0);
         }
@@ -618,11 +797,11 @@ public class WifiWizard extends CordovaPlugin {
             Log.d(TAG, e.getMessage());
             return false;
         }
-        
+
         if (wifiManager.setWifiEnabled(status.equals("true"))) {
             callbackContext.success();
             return true;
-        } 
+        }
         else {
             callbackContext.error("Cannot enable wifi");
             return false;
@@ -643,4 +822,87 @@ public class WifiWizard extends CordovaPlugin {
         return false;
     }
 
+
+    public static class MyService extends IntentService {
+        public MyService() {
+            super("MyService");
+        }
+        @Override
+        protected void onHandleIntent(Intent intent) {
+            Log.d(TAG, "onHandleIntent");
+
+            ServerSocket listener = null;
+            try {
+                listener = new ServerSocket();
+                listener.setReuseAddress(true);
+                listener.bind(new InetSocketAddress(port));
+                Log.d(TAG, String.format("listening on port = %d", port));
+                while (true) {
+                    Log.d(TAG, "waiting for client");
+                    Socket socket = listener.accept();
+                    Log.d(TAG, String.format("client connected from: %s", socket.getRemoteSocketAddress().toString()));
+                    if(socketCallbackContext!=null) {
+                        try {
+
+                            respondToClientSuccess("{'name':'" + socket.getRemoteSocketAddress().toString() + "'}");
+                        }catch (Exception e){
+                            e.printStackTrace();
+                            socket.close();
+
+                            Log.d(TAG,"closing socket");
+                            break;
+
+                        }
+                    }else{
+                        socket.close();
+                        Log.d(TAG,"closing socket");
+                        Log.d(TAG,"callback is null");
+                        break;
+                    }
+                    BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                    PrintStream out = new PrintStream(socket.getOutputStream());
+                    for (String inputLine; (inputLine = in.readLine()) != null;) {
+                        Log.d(TAG, "received");
+                        Log.d(TAG, inputLine);
+                        if(socketCallbackContext!=null) {
+                            try {
+                                respondToClientSuccess("{'name':'" + socket.getRemoteSocketAddress().toString() + "','message':'" + inputLine + "'}");
+                            }
+                            catch (Exception e){
+                                Log.d(TAG,"closing socket");
+                                e.printStackTrace();
+                                socket.close();
+                            }
+                         }
+                        else{
+                            Log.d(TAG,"closing socket");
+                            socket.close();
+                            Log.d(TAG,"callback is null");
+                        }
+
+                        /*
+                        OutputStream os = socket.getOutputStream();
+                        OutputStreamWriter osw = new OutputStreamWriter(os);
+                        BufferedWriter bw = new BufferedWriter(osw);
+                        bw.write("IamApp");
+                        bw.flush();
+                        */
+
+                        //socketCallbackContext
+                        if(inputLine.equals(SOCKET_HANDSHAKE_MESSAGE)) {
+                            StringBuilder outputStringBuilder = new StringBuilder(SOCKET_HANDSHAKE_RESPONSE);
+                            out.println(outputStringBuilder);
+                        }else{
+                            Log.d(TAG,inputLine);
+                            Log.d(TAG,"unknown message");
+                        }
+
+                    }
+                }
+            } catch(IOException e) {
+                respondToClientError("error");
+                Log.d(TAG, e.toString());
+            }
+        }
+    }
 }
